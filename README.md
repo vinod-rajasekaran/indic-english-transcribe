@@ -145,7 +145,7 @@ Results are written to `output/standup/`:
 
 With `original` and `both`, quotes are given in the original script followed by the model's own English translation. You can produce all three versions from one transcript without redoing transcription, for example: `SUMMARY_SOURCE=both python3 run_summary.py output/<name>`.
 
-On our 2-minute Tamil test clip, `both` gave the most accurate summary. The comparison is in [decision 9](DECISIONS.md#9-summary-source-english-original-or-both). Compare the versions on your own recording before choosing one.
+On our 2-minute Tamil test clip, `both` gave the most accurate summary. The comparison is in [decision 8](DECISIONS.md#8-summary-source-english-original-or-both). Compare the versions on your own recording before choosing one.
 
 **Speaker roles.** Diarization labels speakers `SPEAKER_00`, `SPEAKER_01` and so on. On the first run, the model reads the opening of the discussion and suggests who is the moderator and who are participants, and saves this to `speakers.json`. Edit the file to fix mistakes or to use names or descriptions such as `"Participant 3 (teacher)"`, then rerun `python3 run_summary.py output/<name>`. Delete the file to have the model suggest roles again.
 
@@ -153,11 +153,11 @@ On our 2-minute Tamil test clip, `both` gave the most accurate summary. The comp
 
 **Checks.** The script sets Ollama's context window to 32,768 tokens, because Ollama's smaller default would silently cut a long transcript. It warns if the prompt still fills the window. An hour-long discussion usually fits in one pass. A longer one is split into parts, the model takes notes on each part, and then writes the summary from the notes. After writing, the script checks every cited timestamp against the transcript and lists any that match no turn, which is a sign of an invented point.
 
-**Choosing a model.** The default is `qwen3.5:9b`. To try the larger `qwen3:14b`, run `ollama pull qwen3:14b`, then `SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>`. The 27B and larger Qwen models need 32 GB of memory or more. See [decision 6](DECISIONS.md#6-qwen-35-9b-in-ollama-for-the-summary) for why not DeepSeek or GLM.
+**Choosing a model.** The default is `qwen3.5:9b`. To try the larger `qwen3:14b`, run `ollama pull qwen3:14b`, then `SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>`. The 27B and larger Qwen models need 32 GB of memory or more. See [decision 5](DECISIONS.md#5-qwen-35-9b-in-ollama-for-the-summary) for why not DeepSeek or GLM.
 
 ## Speeding up the audio
 
-`SPEED=1.5` speeds the audio up before diarization and transcription. Pitch is kept, and timestamps are scaled back to the original recording. We don't recommend it for Indic speech. In our test, English came through with 6% of words changed, but 62% of Tamil words changed, including a participant's name ([decision 8](DECISIONS.md#8-do-not-speed-up-the-audio)). To test it on your own audio, run the same clip at both speeds and compare:
+`SPEED=1.5` speeds the audio up before diarization and transcription. Pitch is kept, and timestamps are scaled back to the original recording. We don't recommend it for Indic speech. In our test, English came through with 6% of words changed, but 62% of Tamil words changed, including a participant's name ([decision 7](DECISIONS.md#7-do-not-speed-up-the-audio)). To test it on your own audio, run the same clip at both speeds and compare:
 
 ```bash
 bash run_all.sh test-1x test.m4a

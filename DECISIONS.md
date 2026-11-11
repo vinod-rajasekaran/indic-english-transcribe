@@ -6,19 +6,18 @@ Tests were run on an Apple M3 Pro with 18 GB of memory on macOS 27, using a 2-mi
 
 | # | Decision | Status |
 |---|---|---|
-| 9 | [Summary source: English, original, or both](#9-summary-source-english-original-or-both) | Trial; default stays `english` pending a full-recording comparison |
-| 8 | [Do not speed up the audio](#8-do-not-speed-up-the-audio) | Accepted |
-| 7 | [Pin SciPy 1.14.1 on macOS](#7-pin-scipy-1141-on-macos) | Accepted |
-| 6 | [Qwen 3.5 9B in Ollama for the summary](#6-qwen-35-9b-in-ollama-for-the-summary) | Accepted |
-| 5 | [Speaker roles suggested by the model, corrected by a person](#5-speaker-roles-suggested-by-the-model-corrected-by-a-person) | Accepted |
-| 4 | [Romanized transcript off by default](#4-romanized-transcript-off-by-default) | Accepted |
-| 3 | [Translation on by default](#3-translation-on-by-default) | Accepted, supersedes part of #1 |
-| 2 | [One detected language per recording](#2-one-detected-language-per-recording) | Accepted |
-| 1 | [Generalize from Tamil to Indic languages](#1-generalize-from-tamil-to-indic-languages) | Accepted |
+| 8 | [Summary source: English, original, or both](#8-summary-source-english-original-or-both) | Trial; default stays `english` pending a full-recording comparison |
+| 7 | [Do not speed up the audio](#7-do-not-speed-up-the-audio) | Accepted |
+| 6 | [Pin SciPy 1.14.1 on macOS](#6-pin-scipy-1141-on-macos) | Accepted |
+| 5 | [Qwen 3.5 9B in Ollama for the summary](#5-qwen-35-9b-in-ollama-for-the-summary) | Accepted |
+| 4 | [Speaker roles suggested by the model, corrected by a person](#4-speaker-roles-suggested-by-the-model-corrected-by-a-person) | Accepted |
+| 3 | [Romanized transcript off by default](#3-romanized-transcript-off-by-default) | Accepted |
+| 2 | [Translation on by default](#2-translation-on-by-default) | Accepted |
+| 1 | [One detected language per recording](#1-one-detected-language-per-recording) | Accepted |
 
 ---
 
-## 9. Summary source: English, original, or both
+## 8. Summary source: English, original, or both
 
 *2026-11-12. Trial.*
 
@@ -45,7 +44,7 @@ The first version of the prompt had two problems that affected `original` and `b
 
 **Costs.** Indic script takes several times more tokens than English, so `original` and `both` fit less of the transcript into the context window. The summary script estimates this and splits long transcripts into parts.
 
-## 8. Do not speed up the audio
+## 7. Do not speed up the audio
 
 *2026-11-12. Accepted.*
 
@@ -71,7 +70,7 @@ English came through almost unchanged. Tamil did not:
 
 **Follow-up.** The code review found that the turn-length thresholds (minimum turn length, merge gap, padding) had been applied on the sped-up timeline. They are now scaled by `SPEED`. That may recover some of the lost short turns, but the Tamil errors come from the transcription model itself.
 
-## 7. Pin SciPy 1.14.1 on macOS
+## 6. Pin SciPy 1.14.1 on macOS
 
 *2026-11-12. Accepted.*
 
@@ -92,7 +91,7 @@ The macOS loader rejects the compiled file in the SciPy 1.15.x wheels. SciPy 1.1
 
 **Decision.** `setup.sh` tests whether SciPy loads and installs 1.14.1 only if it doesn't. This avoids pinning an old version on systems where the newer one works.
 
-## 6. Qwen 3.5 9B in Ollama for the summary
+## 5. Qwen 3.5 9B in Ollama for the summary
 
 *2026-11-11. Accepted.*
 
@@ -118,7 +117,7 @@ The macOS loader rejects the compiled file in the SciPy 1.15.x wheels. SciPy 1.1
 - Action items are marked Stated (someone said it) or Suggested (the model inferred it).
 - The participation table is computed from the transcript, not written by the model.
 
-## 5. Speaker roles suggested by the model, corrected by a person
+## 4. Speaker roles suggested by the model, corrected by a person
 
 *2026-11-11. Accepted.*
 
@@ -128,7 +127,7 @@ The macOS loader rejects the compiled file in the SciPy 1.15.x wheels. SciPy 1.1
 
 **Evidence.** On the test clip the model identified the moderator correctly. It labelled a one-line speaker as "Note-taker", which is probably wrong, so the human check is needed.
 
-## 4. Romanized transcript off by default
+## 3. Romanized transcript off by default
 
 *2026-11-12. Accepted.*
 
@@ -136,29 +135,18 @@ The macOS loader rejects the compiled file in the SciPy 1.15.x wheels. SciPy 1.1
 
 **Decision.** Run only the mixed-script pass by default. `ROMANIZE=1` adds the second pass. This halves transcription time, the slowest stage on a Mac. Nothing downstream needs the romanized text.
 
-## 3. Translation on by default
+## 2. Translation on by default
 
-*2026-11-11. Accepted, supersedes part of #1.*
+*2026-11-11. Accepted.*
 
 We briefly made translation opt-in, then switched back. The English translation is what most readers of the transcript and summary need. It is also cheap: translating the clip took under 2 minutes on the CPU, compared with over an hour to transcribe a full recording. `TRANSLATE=0` skips it, along with the second Python environment and the 7.6 GB model download.
 
-We also considered dropping translation and letting Qwen read the original. We kept translation because the English transcript lets people who don't read Tamil check quotes. #9 covers how the summary uses it.
+We also considered dropping translation and letting Qwen read the original. We kept translation because the English transcript lets people who don't read Tamil check quotes. #8 covers how the summary uses it.
 
-## 2. One detected language per recording
+## 1. One detected language per recording
 
 *2026-11-11. Accepted.*
 
 **Problem.** Indic-Transcribe-Flex needs a language code. Detecting the language turn by turn is unreliable on short code-mixed turns: on the test clip, language detection put Telugu, Marathi and Konkani behind Tamil.
 
 **Decision.** With `ASR_LANG=auto`, run language detection on the 40 longest turns. Weight each vote by turn length, ignore English, and use the winner for the whole recording. On the test clip it chose Tamil, with 37 seconds of votes against 3.6 for the runner-up, Telugu. A recording that mixes two Indian languages will transcribe the less common one poorly. `ASR_LANG` overrides the detection.
-
-## 1. Generalize from Tamil to Indic languages
-
-*2026-11-11. Accepted.*
-
-The project started as Tamil to English and was renamed from `tamil-english-transcribe` to `indic-english-transcribe`. Indic-Transcribe-Flex and IndicTrans2 both cover the 22 scheduled Indian languages, so the pipeline maps each Flex language code to IndicTrans2's code:
-
-- Kashmiri, Sindhi and Manipuri pick their script from the text.
-- Hindi dialects and Bhili use Hindi, since IndicTrans2 doesn't support them separately.
-
-Translation batches turns by language, and turns written entirely in Latin script pass through untranslated.
