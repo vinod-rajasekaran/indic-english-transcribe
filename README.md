@@ -179,7 +179,17 @@ pyannote reports every stretch of speech with a start and end time in seconds fr
 
 ## Known limits
 
-The Flex model transcribes single-speaker audio only, which is why diarization runs first. One language is used for the whole recording, so a recording that switches between two Indian languages (for example Tamil and Telugu) will transcribe the less common one poorly. Language detection can confuse related languages on short recordings, so set `ASR_LANG` when you know the language. With `ROMANIZE=1`, romanized spelling is not standardized, so the same word may be spelled differently across turns. Mixed-script mode can occasionally mishandle numbers. The summary can only be as good as the translation: a garbled turn may be left out or misread, so check quotes against `transcript.txt` before relying on them. Speaker roles depend on diarization, which can split one person into two labels or merge two people into one. The pinned transformers version for translation (4.46.3) is untested on every setup, so loosen it in `setup.sh` if installation fails.
+The Flex model transcribes single-speaker audio only, which is why diarization runs first. Each run handles one Indian language plus English. A group where some people speak Tamil and others Telugu will have the less common language transcribed poorly (see [Hypotheses](#hypotheses)). Language detection can confuse related languages on short recordings, so set `ASR_LANG` when you know the language. With `ROMANIZE=1`, romanized spelling is not standardized, so the same word may be spelled differently across turns. Mixed-script mode can occasionally mishandle numbers. The summary can only be as good as the translation: a garbled turn may be left out or misread, so check quotes against `transcript.txt` before relying on them. Speaker roles depend on diarization, which can split one person into two labels or merge two people into one. The pinned transformers version for translation (4.46.3) is untested on every setup, so loosen it in `setup.sh` if installation fails.
+
+## Hypotheses
+
+Ideas we expect to help but have not built or tested yet.
+
+**Detect the language per speaker for multilingual groups.** Today the pipeline detects one Indian language for the whole recording ([decision 1](DECISIONS.md#1-one-detected-language-per-recording)). In a group where some people speak Tamil and others Telugu, the minority language would be forced into the wrong script and vocabulary.
+
+- **Hypothesis.** People usually keep to one language through a discussion. Running language detection on each speaker's longest turns, and giving each speaker their own language, would fix mixed groups without the errors of detecting language turn by turn. Turn-by-turn detection misread short code-mixed Tamil as Telugu, Marathi or Konkani on our test clip.
+- **What would change.** Only the language-detection step in `run_asr.py`. Translation already groups turns by language.
+- **How to test.** Run a recording with speakers of two different Indian languages, and compare per-speaker detection against a single `ASR_LANG`.
 
 ## Troubleshooting
 
