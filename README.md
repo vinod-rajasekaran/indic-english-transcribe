@@ -2,6 +2,8 @@
 
 A fully local pipeline that takes a recording of several people speaking an Indian language mixed with English, works out who spoke when, transcribes each turn, translates it into English, and writes a focus group summary with a local Qwen model. Tamil was the first target, but any of the 22 scheduled Indian languages that Indic-Transcribe-Flex supports will work, including Hindi, Telugu, Kannada, Malayalam, Bengali and Marathi. No audio or text leaves your machine once the models are downloaded.
 
+For why it works this way, including the models chosen, the tests we ran and the options we rejected, see [DECISIONS.md](DECISIONS.md).
+
 ## What it does
 
 The pipeline runs in four stages. First, pyannote community-1 labels each stretch of speech with a speaker and a start and end time. Second, Indic-Transcribe-Flex transcribes each speaker turn in mixed-script mode, which writes Indic words in their own script and English words in Latin script, for example `நாளைக்கு meeting இருக்கு`. With `ROMANIZE=1` it also transcribes each turn in romanized mode, which writes the whole turn in Latin script (`naalaikku meeting irukku`). This second pass roughly doubles transcription time, so it is off by default.
@@ -112,10 +114,11 @@ Other options are set the same way:
 | `TRANSLATE` | `1` | Set to `0` to skip the English translation |
 | `MIN_SPEAKERS`, `MAX_SPEAKERS` | `2`, `6` | Expected speaker range |
 | `ROMANIZE` | `0` | Set to `1` to add a romanized (Latin script) version of each turn. Roughly doubles transcription time |
-| `SPEED` | `1` | Speed the audio up (for example `1.5`) before diarization and transcription. Pitch is kept and timestamps are scaled back. Not recommended for Indic speech: see [Speeding up the audio](#speeding-up-the-audio) |
+| `SPEED` | `1` | Speed the audio up (for example `1.5`) before diarization and transcription. Not recommended for Indic speech: see [Speeding up the audio](#speeding-up-the-audio) |
 | `SUMMARIZE` | `1` | Set to `0` to skip the focus group summary |
 | `SUMMARY_MODEL` | `qwen3.5:9b` | Ollama model used for the summary |
 | `NUM_CTX` | `32768` | Context window for the summary model, in tokens |
+| `SUMMARY_SOURCE` | `english` | What the summary model reads: `english` (the translation), `original` (the transcript as spoken), or `both` (the original with the translation as a hint). See [Focus group summary](#focus-group-summary) |
 | `SUMMARY_THINK` | `0` | Set to `1` to let Qwen reason before answering. Slower, sometimes more careful |
 
 Results are written to `output/standup/`:
@@ -126,11 +129,23 @@ Results are written to `output/standup/`:
 | `transcript.txt` | Readable transcript with timestamp, speaker, source file, original text, romanized text (with `ROMANIZE=1`), and English translation (omitted with `TRANSLATE=0`) |
 | `transcript.json` | The same data as JSON, with an `english` field (omitted with `TRANSLATE=0`) |
 | `speakers.json` | Role for each speaker label, such as `"SPEAKER_00": "Moderator"`. Suggested by the model on the first run, then yours to edit |
-| `summary.md` | The focus group summary |
+| `summary.md` | The focus group summary. With `SUMMARY_SOURCE=original` or `both` it is written to `summary_original.md` or `summary_both.md` instead, so you can compare versions |
 
 ## Focus group summary
 
-`run_summary.py` sends the English transcript to a Qwen model in Ollama, which runs on your machine, so the summary is as private as the rest of the pipeline. Only the English lines go to the model, with each turn's timestamp and speaker role. The original lines would roughly double the length and add nothing the model can use.
+`run_summary.py` sends the transcript to a Qwen model in Ollama, which runs on your machine, so the summary is as private as the rest of the pipeline. Each turn goes to the model with its timestamp and speaker role.
+
+**What the model reads.** `SUMMARY_SOURCE` has three options, because machine translation of colloquial speech is the weakest link in the pipeline.
+
+| Option | The model reads | Writes |
+|---|---|---|
+| `english` (default) | The IndicTrans2 English translation | `summary.md` |
+| `original` | The transcript as spoken: Indic script mixed with English | `summary_original.md` |
+| `both` | The original, with the translation in brackets as a hint. The model is told to trust the original when they disagree | `summary_both.md` |
+
+With `original` and `both`, quotes are given in the original script followed by the model's own English translation. You can produce all three versions from one transcript without redoing transcription, for example: `SUMMARY_SOURCE=both python3 run_summary.py output/<name>`.
+
+On our 2-minute Tamil test clip, `both` gave the most accurate summary. The comparison is in [decision 12](DECISIONS.md#12-summary-source-english-original-or-both). Compare the versions on your own recording before choosing one.
 
 **Speaker roles.** Diarization labels speakers `SPEAKER_00`, `SPEAKER_01` and so on. On the first run, the model reads the opening of the discussion and suggests who is the moderator and who are participants, and saves this to `speakers.json`. Edit the file to fix mistakes or to use names or descriptions such as `"Participant 3 (teacher)"`, then rerun `python3 run_summary.py output/<name>`. Delete the file to have the model suggest roles again.
 
@@ -138,27 +153,11 @@ Results are written to `output/standup/`:
 
 **Checks.** The script sets Ollama's context window to 32,768 tokens, because Ollama's smaller default would silently cut a long transcript. It warns if the prompt still fills the window. An hour-long discussion usually fits in one pass. A longer one is split into parts, the model takes notes on each part, and then writes the summary from the notes. After writing, the script checks every cited timestamp against the transcript and lists any that match no turn, which is a sign of an invented point.
 
-**Choosing a model.** `qwen3.5:9b` (about 6.6 GB) is the default because it fits comfortably on a 16 to 18 GB Mac with room for a long context. `qwen3:14b` (about 9 GB) is the alternative to compare: `SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>` after `ollama pull qwen3:14b`. The 27B and larger Qwen models need 32 GB of memory or more.
+**Choosing a model.** The default is `qwen3.5:9b`. To try the larger `qwen3:14b`, run `ollama pull qwen3:14b`, then `SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>`. The 27B and larger Qwen models need 32 GB of memory or more. See [decision 9](DECISIONS.md#9-qwen-35-9b-in-ollama-for-the-summary) for why not DeepSeek or GLM.
 
 ## Speeding up the audio
 
-`SPEED=1.5` makes diarization and transcription faster, but it costs accuracy on Indic speech. We tested it on a 2-minute Tamil and English focus group clip on an M3 Pro, using the 1x run as the reference:
-
-| | 1x | 1.5x |
-|---|---|---|
-| Run time | 155 s | 88 s |
-| Speaker turns found | 13 | 10 |
-| Word changes in English-speaking turns | | 6% |
-| Word changes in Tamil turns | | 62% |
-
-English speech survived the speed-up almost unchanged, but Tamil did not:
-
-- A participant's name came out as a different name.
-- An English word was replaced by an unrelated phrase.
-- One Tamil line was replaced by words nobody said.
-- Three short turns disappeared.
-
-This test ran before the turn-length thresholds were adjusted for `SPEED`, so the lost short turns may now be fewer, but the Tamil recognition errors come from the model itself. Keep the default of 1x when the Indic speech matters, as it does in a focus group. To test it on your own audio, run the same clip at both speeds and compare:
+`SPEED=1.5` speeds the audio up before diarization and transcription. Pitch is kept, and timestamps are scaled back to the original recording. We don't recommend it for Indic speech. In our test, English came through with 6% of words changed, but 62% of Tamil words changed, including a participant's name ([decision 11](DECISIONS.md#11-do-not-speed-up-the-audio)). To test it on your own audio, run the same clip at both speeds and compare:
 
 ```bash
 bash run_all.sh test-1x test.m4a

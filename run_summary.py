@@ -12,6 +12,10 @@
 #   NUM_CTX        context window in tokens    default 32768
 #   OLLAMA_URL     Ollama server address       default http://localhost:11434
 #   SUMMARY_THINK  1 lets Qwen reason before answering (slower, sometimes better)
+#   SUMMARY_SOURCE what the model reads:
+#                    english   the IndicTrans2 translation (default)        -> summary.md
+#                    original  the transcript as spoken, Indic + English    -> summary_original.md
+#                    both      the original with the translation as a hint  -> summary_both.md
 import datetime
 import json
 import os
@@ -25,16 +29,19 @@ MODEL = os.environ.get("SUMMARY_MODEL", "qwen3.5:9b")
 NUM_CTX = int(os.environ.get("NUM_CTX", 32768))
 URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 THINK = os.environ.get("SUMMARY_THINK", "0") == "1"
+SOURCE = os.environ.get("SUMMARY_SOURCE", "english")
+if SOURCE not in ("english", "original", "both"):
+    sys.exit("SUMMARY_SOURCE must be english, original or both")
 OUTPUT_TOKENS = 4096     # room kept for the model's answer
 PROMPT_OVERHEAD = 1500   # instructions and headings around the transcript
 CHARS_PER_TOKEN = 3.5    # rough estimate for English text; errs on the safe side
+INDIC_CHARS_PER_TOKEN = 1.2  # Indic scripts take far more tokens per character
 
 if len(sys.argv) < 2:
     sys.exit("Usage: python3 run_summary.py output/<name>")
 OUT_DIR = sys.argv[1].rstrip("/")
 TRANSCRIPT = os.path.join(OUT_DIR, "transcript.json")
 SPEAKERS = os.path.join(OUT_DIR, "speakers.json")
-SUMMARY = os.path.join(OUT_DIR, "summary.md")
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,7 +49,8 @@ from write_transcript import stamp  # noqa: E402  same timestamp format as trans
 
 
 def tokens(text):
-    return int(len(text) / CHARS_PER_TOKEN) + 1
+    indic = sum(1 for ch in text if ord(ch) > 0x7F)
+    return int((len(text) - indic) / CHARS_PER_TOKEN + indic / INDIC_CHARS_PER_TOKEN) + 1
 
 
 # ---------- Ollama ----------
@@ -100,12 +108,29 @@ def chat(system, user, label):
 with open(TRANSCRIPT, encoding="utf-8") as f:
     segments = json.load(f)
 
-# Summarize from English. Without translation, fall back to romanized or original text.
-field = next((k for k in ("english", "roman", "text") if any(s.get(k) for s in segments)), "text")
-if field != "english":
-    print(f"No English translation found (was TRANSLATE=0?). Summarizing the {field} field, "
-          "which the model will understand less well.")
-turns = [s for s in segments if (s.get(field) or "").strip()]
+if SOURCE != "original" and not any(s.get("english") for s in segments):
+    print("No English translation found (was TRANSLATE=0?), so summarizing the original transcript.")
+    SOURCE = "original"
+SUMMARY = os.path.join(OUT_DIR, "summary.md" if SOURCE == "english" else f"summary_{SOURCE}.md")
+
+LANG_NAMES = {"ta": "Tamil", "hi": "Hindi", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
+              "bn": "Bengali", "mr": "Marathi", "gu": "Gujarati", "pa": "Punjabi", "or": "Odia",
+              "as": "Assamese", "ur": "Urdu", "ne": "Nepali"}
+LANGUAGE = LANG_NAMES.get(next((s.get("lang") for s in segments if s.get("lang")), ""), "an Indian language")
+
+
+def turn_text(s):
+    """The text of one turn, as the model will see it for the chosen SUMMARY_SOURCE."""
+    original = (s.get("text") or "").strip()
+    english = (s.get("english") or "").strip()
+    if SOURCE == "english":
+        return english
+    if SOURCE == "both" and english and english != original:
+        return f"{original} (machine translation: {english})"
+    return original
+
+
+turns = [s for s in segments if turn_text(s)]
 if not turns:
     sys.exit("The transcript has no text to summarize.")
 
@@ -114,7 +139,7 @@ for s in turns:
     st = stats[s["speaker"]]
     st["turns"] += 1
     st["seconds"] += s["end"] - s["start"]
-    st["words"] += len(s[field].split())
+    st["words"] += len(turn_text(s).split())
 
 check_ollama()
 
@@ -138,7 +163,7 @@ if roles is None:
     print("No speakers.json yet, so asking the model to suggest speaker roles")
     sample, used = [], 0
     for s in turns:
-        line = f"{s['speaker']}: {s[field]}"
+        line = f"{s['speaker']}: {turn_text(s)}"
         if used + tokens(line) > 6000:
             break
         sample.append(line)
@@ -175,20 +200,38 @@ def name(spk):
     return roles.get(spk) or spk
 
 
-lines = [f"[{stamp(s['start'])}] {name(s['speaker'])}: {s[field].strip()}" for s in turns]
+lines = [f"[{stamp(s['start'])}] {name(s['speaker'])}: {turn_text(s)}" for s in turns]
 
 # ---------- Summary ----------
 
-SYSTEM = """You are an experienced qualitative researcher writing up a focus group discussion.
-The transcript was produced by speech recognition and machine translation from an Indian language,
-so some lines are garbled or awkward. Work only from what is in the transcript.
+SOURCE_NOTE = {
+    "english": f"""The transcript was produced by speech recognition in {LANGUAGE} and English, then machine
+translated into English, so some lines are garbled or awkward. Work only from what is in the transcript.
+- Quotes must be copied word for word from the transcript. Do not tidy or invent quotes.""",
+    "original": f"""The transcript was produced by speech recognition. It is in {LANGUAGE}, written in {LANGUAGE}
+script, mixed with English words in Latin script, as people actually spoke. Some lines are garbled.
+Work only from what is in the transcript, and write the summary in English.
+- Quotes must copy the original {LANGUAGE} script words exactly, never a translation, followed by your
+  English translation in brackets, like: "original words" (English: your translation). If the quoted
+  words are already English, quote them as they are with no translation.""",
+    "both": f"""The transcript was produced by speech recognition. Each turn is shown as spoken, in {LANGUAGE}
+script mixed with English, followed by a machine translation in brackets. The machine translation is often
+wrong on names, colloquial {LANGUAGE} and idioms. Where it disagrees with the original, trust the original
+and translate it yourself. Work only from what is in the transcript, and write the summary in English.
+- Quotes must copy the original {LANGUAGE} script words exactly, never the machine translation, followed
+  by your own English translation in brackets, like: "original words" (English: your translation).
+  If the quoted words are already English, quote them as they are with no translation.""",
+}[SOURCE]
+
+SYSTEM = f"""You are an experienced qualitative researcher writing up a focus group discussion.
+{SOURCE_NOTE}
 
 Rules:
 - Every point must cite evidence as [hh:mm:ss] Speaker, copied exactly from the transcript lines.
-- Quotes must be copied word for word from the transcript. Do not tidy or invent quotes.
 - Say how widely a view was shared (one participant, several, most) rather than implying consensus.
 - If a line is too garbled to interpret, leave it out rather than guess.
 - Do not add facts, names, numbers or recommendations that nobody in the discussion said.
+- Do not comment on transcription or translation quality. It is not a theme, highlight or action item.
 - Write in plain English. Use Markdown."""
 
 FORMAT = """Write the summary with exactly these sections:
@@ -289,7 +332,8 @@ duration = stamp(max(s["end"] for s in turns))
 with open(SUMMARY, "w", encoding="utf-8") as f:
     f.write(f"# Focus group summary: {os.path.basename(OUT_DIR)}\n\n")
     f.write(f"Recording length {duration}, {len(stats)} speakers, {len(turns)} turns. "
-            f"Generated {datetime.date.today()} by {MODEL} from the {field} transcript.\n\n")
+            f"Generated {datetime.date.today()} by {MODEL} from the "
+            f"{ {'english': 'English translation', 'original': 'original transcript', 'both': 'original transcript with translation hints'}[SOURCE] }.\n\n")
     f.write("> Machine-generated from an automatic transcript and translation. "
             "Check quotes against transcript.txt before relying on them.\n\n")
     f.write(body + "\n\n")
