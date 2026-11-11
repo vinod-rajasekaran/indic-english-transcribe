@@ -13,9 +13,10 @@
 #   OLLAMA_URL     Ollama server address       default http://localhost:11434
 #   SUMMARY_THINK  1 lets Qwen reason before answering (slower, sometimes better)
 #   SUMMARY_SOURCE what the model reads:
-#                    english   the IndicTrans2 translation (default)        -> summary.md
-#                    original  the transcript as spoken, Indic + English    -> summary_original.md
-#                    both      the original with the translation as a hint  -> summary_both.md
+#                    both      the original with the translation as a hint (default) -> summary.md
+#                    english   the IndicTrans2 translation only                       -> summary_english.md
+#                    original  the transcript as spoken, Indic + English              -> summary_original.md
+#                  See DECISIONS.md #9 for why both is the default.
 import datetime
 import json
 import os
@@ -29,7 +30,7 @@ MODEL = os.environ.get("SUMMARY_MODEL", "qwen3.5:9b")
 NUM_CTX = int(os.environ.get("NUM_CTX", 32768))
 URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 THINK = os.environ.get("SUMMARY_THINK", "0") == "1"
-SOURCE = os.environ.get("SUMMARY_SOURCE", "english")
+SOURCE = os.environ.get("SUMMARY_SOURCE", "both")
 if SOURCE not in ("english", "original", "both"):
     sys.exit("SUMMARY_SOURCE must be english, original or both")
 OUTPUT_TOKENS = 4096     # room kept for the model's answer
@@ -108,10 +109,12 @@ def chat(system, user, label):
 with open(TRANSCRIPT, encoding="utf-8") as f:
     segments = json.load(f)
 
+# The default (both) always writes summary.md, even when it falls back to the original below.
+default_source = SOURCE == "both"
 if SOURCE != "original" and not any(s.get("english") for s in segments):
     print("No English translation found (was TRANSLATE=0?), so summarizing the original transcript.")
     SOURCE = "original"
-SUMMARY = os.path.join(OUT_DIR, "summary.md" if SOURCE == "english" else f"summary_{SOURCE}.md")
+SUMMARY = os.path.join(OUT_DIR, "summary.md" if default_source else f"summary_{SOURCE}.md")
 
 LANG_NAMES = {"ta": "Tamil", "hi": "Hindi", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
               "bn": "Bengali", "mr": "Marathi", "gu": "Gujarati", "pa": "Punjabi", "or": "Odia",

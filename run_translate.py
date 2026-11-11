@@ -8,6 +8,7 @@ from collections import defaultdict
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import torch
 from IndicTransToolkit.processor import IndicProcessor
@@ -47,7 +48,13 @@ def it2_code(lang, text):
     return CODES.get(lang)
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# DEVICE: auto (NVIDIA GPU, else the Apple silicon GPU, else CPU), cuda, mps or cpu.
+# On the Mac GPU translation measured about 8x faster than on the CPU, with identical output (DECISIONS.md #10).
+DEVICE = os.environ.get("DEVICE", "auto")
+if DEVICE != "auto":
+    device = DEVICE
+else:
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 dtype = torch.float16 if device == "cuda" else torch.float32
 print(f"Device: {device}")
 

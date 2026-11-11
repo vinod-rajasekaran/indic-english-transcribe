@@ -6,7 +6,9 @@ Tests were run on an Apple M3 Pro with 18 GB of memory on macOS 27, using a 2-mi
 
 | # | Decision | Status |
 |---|---|---|
-| 8 | [Summary source: English, original, or both](#8-summary-source-english-original-or-both) | Trial; default stays `english` pending a full-recording comparison |
+| 10 | [Use the Mac GPU for diarization and translation](#10-use-the-mac-gpu-for-diarization-and-translation) | Accepted |
+| 9 | [Summarize from both the original and the translation](#9-summarize-from-both-the-original-and-the-translation) | Accepted |
+| 8 | [Summary source: English, original, or both](#8-summary-source-english-original-or-both) | Superseded by #9 |
 | 7 | [Do not speed up the audio](#7-do-not-speed-up-the-audio) | Accepted |
 | 6 | [Pin SciPy 1.14.1 on macOS](#6-pin-scipy-1141-on-macos) | Accepted |
 | 5 | [Qwen 3.5 9B in Ollama for the summary](#5-qwen-35-9b-in-ollama-for-the-summary) | Accepted |
@@ -17,9 +19,60 @@ Tests were run on an Apple M3 Pro with 18 GB of memory on macOS 27, using a 2-mi
 
 ---
 
+## 10. Use the Mac GPU for diarization and translation
+
+*2026-11-12. Accepted.*
+
+**Question.** Everything except the summary ran on the CPU. An hour-long recording took 114 minutes: diarization 43, transcription 26 and translation 45. Does the Apple silicon GPU (PyTorch's MPS backend) help?
+
+**Evidence.** We ran the 2-minute clip with every stage on the CPU and then with every stage on the GPU:
+
+| Stage | CPU | GPU |
+|---|---|---|
+| Diarization (pyannote) | 54 s | 14 s |
+| Language detection (Indic-Transcribe-Flex) | 23 s | 64 s |
+| Transcription (Indic-Transcribe-Flex) | 28 s | 83 s |
+| Translation (IndicTrans2) | about 111 s | 14 s |
+
+The GPU was much faster for pyannote and IndicTrans2, but about three times slower for Indic-Transcribe-Flex. Running each stage on its faster device, the clip took 62 seconds from start to translated transcript, against about 266 seconds on the CPU. `compare_runs.py` found the transcript and translation identical word for word to the CPU run.
+
+**Decision.** `DEVICE=auto`, the default, runs diarization and translation on the GPU and transcription on the CPU on a Mac. It uses an NVIDIA GPU for every stage when there is one. `DEVICE=cpu`, `mps` or `cuda` forces one device for every stage. `PYTORCH_ENABLE_MPS_FALLBACK=1` is set so that any operation MPS lacks falls back to the CPU instead of failing.
+
+**Not yet measured.** The full recording hasn't been rerun with this split. If diarization and translation speed up as they did on the clip, an hour of audio should take roughly 40 to 50 minutes to transcribe and translate instead of 114.
+
+## 9. Summarize from both the original and the translation
+
+*2026-11-12. Accepted. Supersedes the default in #8.*
+
+**Question.** #8 shipped three summary sources and kept `english` as the default until all three had been compared on a full recording. Which should be the default?
+
+**Evidence.** We summarized an hour-long Tamil and English group discussion with `qwen3.5:9b`, using each source and the same speaker roles. We checked each citation against the transcript for a turn at that exact time by the speaker named.
+
+| | `english` | `original` | `both` |
+|---|---|---|---|
+| Estimated input | 16,600 tokens | 35,600 tokens | 49,400 tokens |
+| Passes | 1 | 2 parts, then a merge | 2 parts, then a merge |
+| Time | 6 min | 49 min | 41 min |
+| Citations | 25 | 32 | 35 |
+| Exact time and speaker | 23 | 9 | 30 |
+| No turn at that time | 0 | 23 | 4 |
+| Wrong speaker | 2 | 0 | 1 |
+
+- **`english`** was the fastest and its citations mostly pointed at real turns. It was the thinnest: it miscounted the participants, left out several concrete proposals the group made, and its quotes repeated translation errors.
+- **`original`** read the Tamil well, but it moved its citations. Points from the first half of the discussion were cited at 45 to 49 minutes. For example, a point made at 00:07:19 was cited at 00:48:50. 23 of 32 citations matched no turn, so the citations can't be relied on.
+- **`both`** had the most content and the most accurate citations. It covered the main themes and the group's concrete proposals, quoted the Tamil word for word with an English gloss, and told the moderator's instructions apart from what participants said. Some glosses repeat translation errors.
+
+All three identified the moderator and labelled everyone else "Participant n", so speakers.json still needs a person to fill in names.
+
+**Decision.** Make `both` the default and write it to `summary.md`. `english` (written to `summary_english.md`) stays as a quick first look. `original` stays available but isn't recommended until its citation drift is understood.
+
+**Costs.** `both` adds about 35 minutes to an hour-long recording. The transcript needs three times the tokens of the English, so it has to be split into parts at the default 32,768-token context.
+
+**Follow-ups.** Two things were not tested. A larger `NUM_CTX` could fit `both` into a single pass, which may be faster and keep citations more accurate. And we don't know why `original` drifted and `both` didn't.
+
 ## 8. Summary source: English, original, or both
 
-*2026-11-12. Trial.*
+*2026-11-12. Superseded by #9.*
 
 **Problem.** Machine translation of colloquial Tamil is the weakest link in the pipeline. IndicTrans2 turned a participant's self-introduction ("my name is ...") into "my people have come to ...". It also mangled a technical term. The summary model then repeated these mistakes.
 

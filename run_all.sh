@@ -8,6 +8,8 @@
 #   TRANSLATE=0 skip the English translation (transcribe and transliterate only).
 #   ROMANIZE=1  also write each turn in Latin script (a second transcription pass, about 2x slower).
 #   SPEED=1.5   speed the audio up before diarization and transcription (timestamps are scaled back).
+#   DEVICE=cpu  force one device for every stage (default auto: NVIDIA GPU if present; on a Mac,
+#               the GPU for diarization and translation and the CPU for transcription).
 #   SUMMARIZE=0 skip the focus group summary. SUMMARY_MODEL picks the Ollama model (default qwen3.5:9b).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -26,6 +28,8 @@ fi
 # Keep everything local. Models must already be downloaded.
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
+# Print progress lines as they happen, even when output goes to a log file.
+export PYTHONUNBUFFERED=1
 
 LIST="$WORK/concat.txt"; : > "$LIST"
 PARTS="$WORK/parts.tsv"; : > "$PARTS"

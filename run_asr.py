@@ -21,6 +21,8 @@ from collections import Counter
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# On Apple silicon, run any operation the GPU (MPS) does not support on the CPU instead of failing.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import soundfile as sf
 import torch
@@ -48,12 +50,22 @@ MIN_LEN = 0.5 / SPEED    # drop turns shorter than this
 PAD = 0.1 / SPEED        # seconds of audio kept on each side of a turn
 LID_TURNS = 40           # with ASR_LANG=auto, run language ID on this many of the longest turns
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {device}")
+# DEVICE: auto, cuda, mps (Apple silicon GPU) or cpu. auto uses an NVIDIA GPU for both stages
+# if there is one. On a Mac it runs diarization on the GPU and transcription on the CPU,
+# which measured fastest for each stage (DECISIONS.md #10). Any other value forces both stages.
+DEVICE = os.environ.get("DEVICE", "auto")
+if DEVICE != "auto":
+    diar_device = asr_device = torch.device(DEVICE)
+elif torch.cuda.is_available():
+    diar_device = asr_device = torch.device("cuda")
+else:
+    diar_device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    asr_device = torch.device("cpu")
+print(f"Device: diarization on {diar_device}, transcription on {asr_device}")
 
 # 1. Diarization
 pipeline = Pipeline.from_pretrained("models/pyannote-community-1")
-pipeline.to(device)
+pipeline.to(diar_device)
 with ProgressHook() as hook:
     result = pipeline(AUDIO, min_speakers=MIN_SPEAKERS, max_speakers=MAX_SPEAKERS, hook=hook)
 
@@ -76,8 +88,10 @@ print(f"{len(raw)} raw turns -> {len(merged)} segments")
 
 del pipeline, result
 gc.collect()
-if device.type == "cuda":
+if diar_device.type == "cuda":
     torch.cuda.empty_cache()
+elif diar_device.type == "mps":
+    torch.mps.empty_cache()
 
 # 2. Transcription
 model_dir = os.path.abspath("models/indic-transcribe-flex")
@@ -87,7 +101,7 @@ from long_form import transcribe_long  # noqa: E402
 
 asr = IndicTranscribe.from_pretrained(model_dir)
 if hasattr(asr, "to"):
-    asr = asr.to(device)
+    asr = asr.to(asr_device)
 
 audio, sr = sf.read(AUDIO, dtype="float32")  # float32 halves memory versus the float64 default
 assert sr == 16000, "Audio must be 16 kHz mono. Use run_all.sh, which converts it."

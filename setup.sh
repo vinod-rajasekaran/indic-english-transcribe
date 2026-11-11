@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 MAC=0; [ "$(uname)" = "Darwin" ] && MAC=1
 
 if [ "$MAC" = "1" ]; then
-  # macOS (Apple silicon): needs Homebrew. Transcription and translation run on the CPU.
+  # macOS (Apple silicon): needs Homebrew. Diarization and translation use the GPU, transcription the CPU.
   command -v brew >/dev/null || { echo "Install Homebrew first: https://brew.sh"; exit 1; }
   command -v ffmpeg >/dev/null || brew install ffmpeg
   command -v python3.10 >/dev/null || brew install python@3.10

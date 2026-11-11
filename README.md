@@ -23,7 +23,7 @@ Either of these:
 
 You also need about 30 GB of free disk space (the models take about 23 GB) and internet access for the one-time setup. A free Hugging Face account is needed to accept the licences of two gated models.
 
-**What to expect on a Mac.** Diarization, transcription and translation run on the CPU. The summary model runs on the Mac's GPU through Ollama. On the M3 Pro, a 2-minute clip took 2.5 minutes from start to transcript, including loading the models. An hour of audio takes roughly 75 to 90 minutes before translation and summary.
+**What to expect on a Mac.** Diarization and translation run on the Mac's GPU, transcription runs on the CPU, and the summary model runs on the GPU through Ollama. On the M3 Pro, a 2-minute clip takes about a minute from start to translated transcript, including loading the models. An hour-long recording took 114 minutes on the CPU alone (diarization 43, transcription 26, translation 45), plus about 40 minutes for the summary. With the GPU split the clip ran 4 times faster, so expect roughly 40 to 50 minutes for the transcript, but this hasn't been measured on a full recording yet ([decision 10](DECISIONS.md#10-use-the-mac-gpu-for-diarization-and-translation)).
 
 | Model | Purpose | Download |
 |---|---|---|
@@ -118,7 +118,8 @@ Other options are set the same way:
 | `SUMMARIZE` | `1` | Set to `0` to skip the focus group summary |
 | `SUMMARY_MODEL` | `qwen3.5:9b` | Ollama model used for the summary |
 | `NUM_CTX` | `32768` | Context window for the summary model, in tokens |
-| `SUMMARY_SOURCE` | `english` | What the summary model reads: `english` (the translation), `original` (the transcript as spoken), or `both` (the original with the translation as a hint). See [Focus group summary](#focus-group-summary) |
+| `SUMMARY_SOURCE` | `both` | What the summary model reads: `both` (the original with the translation as a hint), `english` (the translation only), or `original` (the transcript as spoken). See [Focus group summary](#focus-group-summary) |
+| `DEVICE` | `auto` | `auto` uses an NVIDIA GPU if there is one. On a Mac it uses the GPU for diarization and translation and the CPU for transcription. `cpu`, `mps` or `cuda` forces every stage onto that device |
 | `SUMMARY_THINK` | `0` | Set to `1` to let Qwen reason before answering. Slower, sometimes more careful |
 
 Results are written to `output/standup/`:
@@ -129,7 +130,7 @@ Results are written to `output/standup/`:
 | `transcript.txt` | Readable transcript with timestamp, speaker, source file, original text, romanized text (with `ROMANIZE=1`), and English translation (omitted with `TRANSLATE=0`) |
 | `transcript.json` | The same data as JSON, with an `english` field (omitted with `TRANSLATE=0`) |
 | `speakers.json` | Role for each speaker label, such as `"SPEAKER_00": "Moderator"`. Suggested by the model on the first run, then yours to edit |
-| `summary.md` | The focus group summary. With `SUMMARY_SOURCE=original` or `both` it is written to `summary_original.md` or `summary_both.md` instead, so you can compare versions |
+| `summary.md` | The focus group summary. With `SUMMARY_SOURCE=english` or `original` it is written to `summary_english.md` or `summary_original.md` instead, so you can compare versions |
 
 ## Focus group summary
 
@@ -139,19 +140,19 @@ Results are written to `output/standup/`:
 
 | Option | The model reads | Writes |
 |---|---|---|
-| `english` (default) | The IndicTrans2 English translation | `summary.md` |
+| `both` (default) | The original, with the translation in brackets as a hint. The model is told to trust the original when they disagree | `summary.md` |
+| `english` | The IndicTrans2 English translation only | `summary_english.md` |
 | `original` | The transcript as spoken: Indic script mixed with English | `summary_original.md` |
-| `both` | The original, with the translation in brackets as a hint. The model is told to trust the original when they disagree | `summary_both.md` |
 
-With `original` and `both`, quotes are given in the original script followed by the model's own English translation. You can produce all three versions from one transcript without redoing transcription, for example: `SUMMARY_SOURCE=both python3 run_summary.py output/<name>`.
+With `both` and `original`, quotes are given in the original script followed by the model's own English translation. You can produce all three versions from one transcript without redoing transcription, for example: `SUMMARY_SOURCE=english python3 run_summary.py output/<name>`.
 
-On our 2-minute Tamil test clip, `both` gave the most accurate summary. The comparison is in [decision 8](DECISIONS.md#8-summary-source-english-original-or-both). Compare the versions on your own recording before choosing one.
+On an hour-long Tamil and English group discussion, `both` gave the richest summary with the most accurate citations, but took about 40 minutes against 6 for `english`, because Tamil script needs about three times as many tokens. Use `SUMMARY_SOURCE=english` when you need a quick first look. The comparison is in [decision 9](DECISIONS.md#9-summarize-from-both-the-original-and-the-translation).
 
 **Speaker roles.** Diarization labels speakers `SPEAKER_00`, `SPEAKER_01` and so on. On the first run, the model reads the opening of the discussion and suggests who is the moderator and who are participants, and saves this to `speakers.json`. Edit the file to fix mistakes or to use names or descriptions such as `"Participant 3 (teacher)"`, then rerun `python3 run_summary.py output/<name>`. Delete the file to have the model suggest roles again.
 
 **Summary format.** `summary.md` has an overview, key themes with supporting quotes, key highlights, points of agreement, points of disagreement, an action items table, and open questions. Every point cites `[hh:mm:ss] Speaker`. The action items table marks each item as Stated, meaning someone said it, or Suggested, meaning the model inferred it. A participation table at the end, computed directly from the transcript, shows each speaker's turns and share of talk time.
 
-**Checks.** The script sets Ollama's context window to 32,768 tokens, because Ollama's smaller default would silently cut a long transcript. It warns if the prompt still fills the window. An hour-long discussion usually fits in one pass. A longer one is split into parts, the model takes notes on each part, and then writes the summary from the notes. After writing, the script checks every cited timestamp against the transcript and lists any that match no turn, which is a sign of an invented point.
+**Checks.** The script sets Ollama's context window to 32,768 tokens, because Ollama's smaller default would silently cut a long transcript. It warns if the prompt still fills the window. An hour-long discussion fits in one pass from the English translation, but not from the original script, which takes several times more tokens. A transcript that doesn't fit is split into parts, the model takes notes on each part, and then writes the summary from the notes. After writing, the script checks every cited timestamp against the transcript and lists any that match no turn, which is a sign of an invented point or a misplaced citation.
 
 **Choosing a model.** The default is `qwen3.5:9b`. To try the larger `qwen3:14b`, run `ollama pull qwen3:14b`, then `SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>`. The 27B and larger Qwen models need 32 GB of memory or more. See [decision 5](DECISIONS.md#5-qwen-35-9b-in-ollama-for-the-summary) for why not DeepSeek or GLM.
 
