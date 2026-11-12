@@ -68,7 +68,7 @@ On the first try, with 49,000 tokens between the instructions and the end of the
 **Decision.**
 
 - **Prompt files.** Each purpose is a file in `prompts/`, and `PURPOSE` picks it: `fgd`, `meeting`, or the path to any file. A file has six sections: title, role, extra rules, how to suggest speaker roles, what to note on each part of a long transcript, and the output format.
-- **Required.** `PURPOSE` has no default, because a summary written with the wrong prompt looks plausible and is easy to miss. `run_all.sh` checks it before transcription starts, so a missing purpose fails in seconds, not after an hour.
+- **Required for a summary.** `PURPOSE` has no default, because a summary written with the wrong prompt looks plausible and is easy to miss. `run_summary.py` refuses to run without it. `run_all.sh` treats it as optional. Transcription and translation don't depend on the purpose, so without `PURPOSE` the run stops at the transcript and prints the command to summarize. With it, the summary runs at the end. The value is checked before transcription starts, so a typo fails in seconds, not after an hour. This replaces `SUMMARIZE=0`. (Changed the same day: at first `run_all.sh` required `PURPOSE`, which tied a purpose-independent step to a summary setting.)
 - **What stays in code.** The rules that keep a summary honest are in the script, not the files, so a new purpose can't drop them. These are timestamp citations, no invented facts, how to quote each `SUMMARY_SOURCE`, the ban on meta-commentary, the citation check and the participation table.
 - **File names.** Each purpose writes `summary_<purpose>.md`, so several purposes can run on one transcript. This replaces the `summary.md` name from #9.
 

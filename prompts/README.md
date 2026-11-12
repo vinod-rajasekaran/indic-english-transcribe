@@ -1,17 +1,23 @@
 # Summary prompts
 
-The summary prompt depends on what the recording is. Each file here is one purpose, and `PURPOSE` picks it:
+The summary prompt depends on what the recording is. Each file here is one purpose, and `PURPOSE` picks it. Transcription and translation don't depend on the purpose, so you transcribe once and then summarize as many times as you like:
 
 ```
-PURPOSE=fgd bash run_all.sh fgd-1 part-1.m4a part-2.m4a
-PURPOSE=meeting python3 run_summary.py output/standup
-PURPOSE=path/to/my-prompt.md python3 run_summary.py output/interview-3
+# Once per recording: transcription and translation
+bash run_all.sh fgd-1 part-1.m4a part-2.m4a
+
+# Then one or more summaries of that transcript, about 5 minutes each
+PURPOSE=fgd python3 run_summary.py output/fgd-1
+PURPOSE=meeting python3 run_summary.py output/fgd-1
+PURPOSE=path/to/my-prompt.md python3 run_summary.py output/fgd-1
 ```
+
+`PURPOSE=fgd bash run_all.sh fgd-1 ...` does the transcript and the first summary in one go.
 
 | File | Purpose | Status |
 |---|---|---|
 | `fgd.md` | Focus group discussion: themes, agreement and disagreement, action items | Tested on an hour-long Tamil and English group discussion |
-| `meeting.md` | Work meeting: topics, decisions, action items with owners and deadlines | Not yet tested on a real recording |
+| `meeting.md` | Work meeting: topics, decisions, action items with owners and deadlines | Run only on a focus group recording (19 of 21 citations exact); not yet tested on a real meeting |
 
 ## Writing your own
 
