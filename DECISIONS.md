@@ -6,19 +6,52 @@ Tests were run on an Apple M3 Pro with 18 GB of memory on macOS 27, using a 2-mi
 
 | # | Decision | Status |
 |---|---|---|
+| 12 | [Summarize in one pass with a 64K context](#12-summarize-in-one-pass-with-a-64k-context) | Accepted |
 | 11 | [Summary prompt chosen by purpose, kept in files](#11-summary-prompt-chosen-by-purpose-kept-in-files) | Accepted |
 | 10 | [Use the Mac GPU for diarization and translation](#10-use-the-mac-gpu-for-diarization-and-translation) | Accepted |
-| 9 | [Summarize from both the original and the translation](#9-summarize-from-both-the-original-and-the-translation) | Accepted |
+| 9 | [Summarize from both the original and the translation](#9-summarize-from-both-the-original-and-the-translation) | Accepted; evidence corrected by #12 |
 | 8 | [Summary source: English, original, or both](#8-summary-source-english-original-or-both) | Superseded by #9 |
 | 7 | [Do not speed up the audio](#7-do-not-speed-up-the-audio) | Accepted |
 | 6 | [Pin SciPy 1.14.1 on macOS](#6-pin-scipy-1141-on-macos) | Accepted |
-| 5 | [Qwen 3.5 9B in Ollama for the summary](#5-qwen-35-9b-in-ollama-for-the-summary) | Accepted |
+| 5 | [Qwen 3.5 9B in Ollama for the summary](#5-qwen-35-9b-in-ollama-for-the-summary) | Accepted; context size changed by #12 |
 | 4 | [Speaker roles suggested by the model, corrected by a person](#4-speaker-roles-suggested-by-the-model-corrected-by-a-person) | Accepted |
 | 3 | [Romanized transcript off by default](#3-romanized-transcript-off-by-default) | Accepted |
 | 2 | [Translation on by default](#2-translation-on-by-default) | Accepted |
 | 1 | [One detected language per recording](#1-one-detected-language-per-recording) | Accepted |
 
 ---
+
+## 12. Summarize in one pass with a 64K context
+
+*2026-11-12. Accepted. Corrects the evidence in #9 and changes the context size from #5.*
+
+**Problem.** At the 32,768-token context from #5, the default `both` source (#9) doesn't fit an hour-long transcript: about 49,000 tokens. The script splits it into two parts, takes notes on each, and writes the summary from the notes. Rerunning that path showed the good result in #9 was luck. With the same prompt, the same transcript and temperature 0.2, the results were:
+
+| Run (hour-long recording, `both`) | Citations | Exact time and speaker | No turn at that time |
+|---|---|---|---|
+| Two parts, run in #9 | 35 | 30 | 4 |
+| Two parts, rerun | 15 | 0 | 14 |
+| Two parts, `meeting` prompt | 33 | 12 | 18 |
+
+In the final step the model often makes up times or moves points from one half into the other. For example, something said at 00:54:18 was cited as 00:21:30.
+
+**Evidence.** We raised `NUM_CTX` to 65,536 so the whole transcript goes in one pass:
+
+| One pass at 64K | Citations | Exact | No turn | Time | Quotes in Tamil |
+|---|---|---|---|---|---|
+| Instructions before the transcript only | 23 | 20 | 2 | 3.5 min | No |
+| Instructions also repeated after it | 15 | 13 | 2 | 5 min | Yes |
+
+On the first try, with 49,000 tokens between the instructions and the end of the prompt, the model forgot two rules. It wrote citations as `(00:54:18)` rather than `[00:54:18]`, so the citation check found nothing to check and stayed silent, and it quoted the machine translation instead of the Tamil. Repeating the instructions after the transcript fixed both. The fixed summary covers the whole hour, though the stretch from about 7 to 22 minutes is lightly covered, and action items don't always carry a citation. It also glossed a colloquial Tamil phrase correctly where the translation got it wrong.
+
+**Decision.**
+
+- **Context.** Set `NUM_CTX` to 65,536 by default.
+- **Prompt order.** Repeat the instructions and format after the transcript. Notes on each part now end with a reminder to keep citations exactly, and the summary from notes is told to cite only times that appear in the notes.
+- **Zero-citation warning.** Warn when a summary has no `[hh:mm:ss]` citations at all.
+- **Keep the two-part path,** for transcripts that are still too long. The README warns that its citations need checking.
+
+**Costs.** Ollama reported `qwen3.5:9b` at 17 GB with this context on the 18 GB M3 Pro, and about 17% of memory was still free during the run. Macs with 16 GB or less should set `NUM_CTX=32768` and accept the two-part path. One run per setting is a small sample, since run-to-run variance is what this entry is about.
 
 ## 11. Summary prompt chosen by purpose, kept in files
 

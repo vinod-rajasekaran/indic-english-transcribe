@@ -13,7 +13,7 @@
 #
 # Options (environment variables):
 #   SUMMARY_MODEL  Ollama model tag            default qwen3.5:9b
-#   NUM_CTX        context window in tokens    default 32768
+#   NUM_CTX        context window in tokens    default 65536 (see DECISIONS.md #12)
 #   OLLAMA_URL     Ollama server address       default http://localhost:11434
 #   SUMMARY_THINK  1 lets Qwen reason before answering (slower, sometimes better)
 #   SUMMARY_SOURCE what the model reads:
@@ -31,14 +31,14 @@ import urllib.request
 from collections import defaultdict
 
 MODEL = os.environ.get("SUMMARY_MODEL", "qwen3.5:9b")
-NUM_CTX = int(os.environ.get("NUM_CTX", 32768))
+NUM_CTX = int(os.environ.get("NUM_CTX", 65536))
 URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 THINK = os.environ.get("SUMMARY_THINK", "0") == "1"
 SOURCE = os.environ.get("SUMMARY_SOURCE", "both")
 if SOURCE not in ("english", "original", "both"):
     sys.exit("SUMMARY_SOURCE must be english, original or both")
 OUTPUT_TOKENS = 4096     # room kept for the model's answer
-PROMPT_OVERHEAD = 1500   # instructions and headings around the transcript
+PROMPT_OVERHEAD = 3000   # instructions around the transcript, given before and after it
 CHARS_PER_TOKEN = 3.5    # rough estimate for English text; errs on the safe side
 INDIC_CHARS_PER_TOKEN = 1.2  # Indic scripts take far more tokens per character
 
@@ -263,7 +263,7 @@ SYSTEM = f"""{prompt['role']}
 {SOURCE_NOTE}
 
 Rules:
-- Every point must cite evidence as [hh:mm:ss] Speaker, copied exactly from the transcript lines.
+- Every point must cite evidence as [hh:mm:ss] Speaker in square brackets, copied exactly from the transcript lines.
 {prompt['rules']}
 - If a line is too garbled to interpret, leave it out rather than guess.
 - Do not add facts, names, numbers or recommendations that nobody in the discussion said.
@@ -272,12 +272,17 @@ Rules:
 
 FORMAT = prompt["format"]
 
+# With tens of thousands of tokens of transcript, instructions given only before it get lost: in
+# testing, a one-pass summary dropped the square-bracket citations and the quoting rule. So the
+# instructions are repeated after the transcript as well.
+REMINDER = f"Now write it. Your instructions again:\n\n{SYSTEM}\n\n{FORMAT}"
+
 budget = NUM_CTX - OUTPUT_TOKENS - PROMPT_OVERHEAD
 full = "\n".join(lines)
 print(f"Transcript: {len(lines)} turns, about {tokens(full)} tokens; context budget {budget} tokens")
 
 if tokens(full) <= budget:
-    body = chat(SYSTEM, f"{FORMAT}\n\nTranscript:\n{full}", "writing summary")
+    body = chat(SYSTEM, f"{FORMAT}\n\nTranscript:\n{full}\n\n{REMINDER}", "writing summary")
 else:
     # Too long for one pass: take notes on each part, then summarize the notes.
     chunks, current, used = [], [], 0
@@ -296,7 +301,8 @@ else:
             f"This is part {k} of {len(chunks)} of the discussion. Write detailed notes on it: "
             f"{prompt['notes']}. "
             "Keep every [hh:mm:ss] Speaker citation and copy the best quotes word for word.\n\n"
-            "Transcript part:\n" + "\n".join(chunk),
+            "Transcript part:\n" + "\n".join(chunk) +
+            "\n\nNow write the notes. Keep every [hh:mm:ss] Speaker citation exactly as it appears above.",
             f"notes on part {k}/{len(chunks)}",
         ))
     # If all the notes together are still too long, condense neighbouring notes until they fit.
@@ -321,7 +327,9 @@ else:
         SYSTEM,
         f"{FORMAT}\n\nWork from these notes on the parts of the discussion, in order. "
         "Merge repeated themes across parts and keep the citations.\n\n" +
-        "\n\n".join(f"### Notes on part {k}\n{n}" for k, n in enumerate(notes, 1)),
+        "\n\n".join(f"### Notes on part {k}\n{n}" for k, n in enumerate(notes, 1)) +
+        "\n\nCite only [hh:mm:ss] Speaker citations that appear in the notes above. Never make up a time.\n\n"
+        + REMINDER,
         "writing summary from notes",
     )
 
@@ -331,6 +339,8 @@ else:
 valid = {stamp(s["start"]) for s in turns}
 cited = re.findall(r"\[(\d{2}:\d{2}:\d{2})\]", body)
 unknown = sorted(set(c for c in cited if c not in valid))
+if not cited:
+    print("WARNING: the summary has no [hh:mm:ss] citations, so none of its points can be checked.")
 if unknown:
     print(f"WARNING: {len(unknown)} cited timestamp(s) do not match any turn: {', '.join(unknown[:10])}")
 
@@ -349,6 +359,8 @@ with open(SUMMARY, "w", encoding="utf-8") as f:
             "Check quotes against transcript.txt before relying on them.\n\n")
     f.write(body + "\n\n")
     f.write("## Participation\n\n" + "\n".join(table) + "\n")
+    if not cited:
+        f.write("\n> This summary has no [hh:mm:ss] citations, so its points could not be checked.\n")
     if unknown:
         f.write(f"\n> {len(unknown)} cited timestamp(s) did not match a transcript turn: "
                 f"{', '.join(unknown)}. Check those points.\n")
