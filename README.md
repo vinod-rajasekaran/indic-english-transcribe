@@ -1,6 +1,6 @@
 # indic-english-transcribe
 
-A fully local pipeline that takes a recording of several people speaking an Indian language mixed with English, works out who spoke when, transcribes each turn, translates it into English, and writes a focus group summary with a local Qwen model. Tamil was the first target, but any of the 22 scheduled Indian languages that Indic-Transcribe-Flex supports will work, including Hindi, Telugu, Kannada, Malayalam, Bengali and Marathi. No audio or text leaves your machine once the models are downloaded.
+A fully local pipeline that takes a recording of several people speaking an Indian language mixed with English, works out who spoke when, transcribes each turn, translates it into English, and writes a summary with a local Qwen model. The summary prompt depends on what the recording is, such as a focus group discussion or a meeting. Tamil was the first target, but any of the 22 scheduled Indian languages that Indic-Transcribe-Flex supports will work, including Hindi, Telugu, Kannada, Malayalam, Bengali and Marathi. No audio or text leaves your machine once the models are downloaded.
 
 For why it works this way, including the models chosen, the tests we ran and the options we rejected, see [DECISIONS.md](DECISIONS.md).
 
@@ -12,7 +12,7 @@ The language is detected automatically. The script runs language ID on every tur
 
 Third, IndicTrans2 translates each turn into English. Turns written entirely in Latin script pass through unchanged. Translation runs in a second Python environment, because IndicTrans2 needs an older transformers release.
 
-Fourth, a Qwen model running in Ollama reads the English transcript and writes a focus group summary: themes, highlights, agreement and disagreement, action items and open questions, each point cited with a timestamp and speaker. See [Focus group summary](#focus-group-summary).
+Fourth, a Qwen model running in Ollama reads the transcript and writes a summary. `PURPOSE` says what the recording is and picks the prompt from `prompts/`. For a focus group (`PURPOSE=fgd`), the summary covers themes, highlights, agreement and disagreement, action items and open questions, each point cited with a timestamp and speaker. See [Summary](#summary).
 
 ## Requirements
 
@@ -30,7 +30,7 @@ You also need about 30 GB of free disk space (the models take about 23 GB) and i
 | `pyannote/speaker-diarization-community-1` | Who spoke when | 32 MB |
 | `bodhan-ai/Indic-Transcribe-Flex` | Speech to text | 9 GB |
 | `ai4bharat/indictrans2-indic-en-1B` | Text to English | about 8 GB |
-| `qwen3.5:9b` (Ollama) | Focus group summary | 6.6 GB |
+| `qwen3.5:9b` (Ollama) | Summary | 6.6 GB |
 
 ## Setup
 
@@ -73,37 +73,37 @@ After the downloads finish you can disconnect the machine from the network.
 
    ```bash
    ffmpeg -ss 60 -i input/part-1.m4a -t 120 -c copy input/test.m4a
-   bash run_all.sh test test.m4a
+   PURPOSE=fgd bash run_all.sh test test.m4a
    ```
 
-7. Read `output/test/transcript.txt` and `output/test/summary.md`.
+7. Read `output/test/transcript.txt` and `output/test/summary_fgd.md`.
 8. Run the full discussion, with the speaker range set to the number of people in the room:
 
    ```bash
-   MIN_SPEAKERS=2 MAX_SPEAKERS=10 bash run_all.sh fgd-1 part-1.m4a part-2.m4a part-3.m4a part-4.m4a
+   PURPOSE=fgd MIN_SPEAKERS=2 MAX_SPEAKERS=10 bash run_all.sh fgd-1 part-1.m4a part-2.m4a part-3.m4a part-4.m4a
    ```
 
-   On a Mac this runs for over an hour. To keep it running after you close the terminal, add `nohup` at the start and `> work/fgd-1.log 2>&1 &` at the end, then follow progress with `tail -f work/fgd-1.log`. To transcribe now and summarize later, add `SUMMARIZE=0`.
+   On a Mac this runs for over an hour. To keep it running after you close the terminal, add `nohup` at the start and `> work/fgd-1.log 2>&1 &` at the end, then follow progress with `tail -f work/fgd-1.log`. To transcribe now and summarize later, use `SUMMARIZE=0` instead of `PURPOSE`.
 
 9. Open `output/fgd-1/speakers.json`. The model has suggested a role for each speaker label. Correct any that are wrong. Listening to a few turns from `transcript.txt` helps, since each turn gives the source file and time.
 10. Rerun only the summary, which takes minutes rather than hours:
 
     ```bash
-    python3 run_summary.py output/fgd-1
+    PURPOSE=fgd python3 run_summary.py output/fgd-1
     ```
 
 ## Run
 
-Copy your recordings into `input/`, then run the script with an output name followed by the files in the order they should be joined:
+Copy your recordings into `input/`, then run the script with `PURPOSE`, an output name, and the files in the order they should be joined:
 
 ```bash
-bash run_all.sh standup part1.mp4 part2.mp4 part3.mp4
+PURPOSE=meeting bash run_all.sh standup part1.mp4 part2.mp4 part3.mp4
 ```
 
-A single recording works the same way: `bash run_all.sh standup meeting.mp4`. Set the expected speaker range for better speaker counting:
+`PURPOSE` is required, so that the summary uses the right prompt. It is checked before transcription starts. A single recording works the same way: `PURPOSE=meeting bash run_all.sh standup meeting.mp4`. Set the expected speaker range for better speaker counting:
 
 ```bash
-MIN_SPEAKERS=2 MAX_SPEAKERS=5 bash run_all.sh standup part1.mp4 part2.mp4
+PURPOSE=meeting MIN_SPEAKERS=2 MAX_SPEAKERS=5 bash run_all.sh standup part1.mp4 part2.mp4
 ```
 
 Other options are set the same way:
@@ -115,10 +115,11 @@ Other options are set the same way:
 | `MIN_SPEAKERS`, `MAX_SPEAKERS` | `2`, `6` | Expected speaker range |
 | `ROMANIZE` | `0` | Set to `1` to add a romanized (Latin script) version of each turn. Roughly doubles transcription time |
 | `SPEED` | `1` | Speed the audio up (for example `1.5`) before diarization and transcription. Not recommended for Indic speech: see [Speeding up the audio](#speeding-up-the-audio) |
-| `SUMMARIZE` | `1` | Set to `0` to skip the focus group summary |
+| `PURPOSE` | none, required | What the recording is, which picks the summary prompt: `fgd` (focus group discussion), `meeting`, or the path to your own prompt file. Not needed with `SUMMARIZE=0`. See [prompts/README.md](prompts/README.md) |
+| `SUMMARIZE` | `1` | Set to `0` to skip the summary |
 | `SUMMARY_MODEL` | `qwen3.5:9b` | Ollama model used for the summary |
 | `NUM_CTX` | `32768` | Context window for the summary model, in tokens |
-| `SUMMARY_SOURCE` | `both` | What the summary model reads: `both` (the original with the translation as a hint), `english` (the translation only), or `original` (the transcript as spoken). See [Focus group summary](#focus-group-summary) |
+| `SUMMARY_SOURCE` | `both` | What the summary model reads: `both` (the original with the translation as a hint), `english` (the translation only), or `original` (the transcript as spoken). See [Summary](#summary) |
 | `DEVICE` | `auto` | `auto` uses an NVIDIA GPU if there is one. On a Mac it uses the GPU for diarization and translation and the CPU for transcription. `cpu`, `mps` or `cuda` forces every stage onto that device |
 | `SUMMARY_THINK` | `0` | Set to `1` to let Qwen reason before answering. Slower, sometimes more careful |
 
@@ -130,9 +131,19 @@ Results are written to `output/standup/`:
 | `transcript.txt` | Readable transcript with timestamp, speaker, source file, original text, romanized text (with `ROMANIZE=1`), and English translation (omitted with `TRANSLATE=0`) |
 | `transcript.json` | The same data as JSON, with an `english` field (omitted with `TRANSLATE=0`) |
 | `speakers.json` | Role for each speaker label, such as `"SPEAKER_00": "Moderator"`. Suggested by the model on the first run, then yours to edit |
-| `summary.md` | The focus group summary. With `SUMMARY_SOURCE=english` or `original` it is written to `summary_english.md` or `summary_original.md` instead, so you can compare versions |
+| `summary_<purpose>.md` | The summary, for example `summary_fgd.md`. With `SUMMARY_SOURCE=english` or `original`, `_english` or `_original` is added to the name, so you can compare versions |
 
-## Focus group summary
+## Summary
+
+**Purpose.** What a summary should contain depends on the recording. A focus group needs themes and where people agreed or disagreed. A meeting needs decisions and owners. `PURPOSE` picks a prompt file from `prompts/`:
+
+| `PURPOSE` | For | Writes |
+|---|---|---|
+| `fgd` | Focus group discussion | `summary_fgd.md` |
+| `meeting` | Work meeting (not yet tested on a real recording) | `summary_meeting.md` |
+| a file path | Your own prompt | `summary_<file name>.md` |
+
+To add a purpose, copy one of the files in `prompts/` and edit it. [prompts/README.md](prompts/README.md) explains the sections. The rules that keep a summary faithful to the transcript are in the script, not the prompt files, so every purpose gets them: cite a timestamp and speaker for every point, don't invent facts, and quote word for word. You can run several purposes on one transcript, since each writes its own file.
 
 `run_summary.py` sends the transcript to a Qwen model in Ollama, which runs on your machine, so the summary is as private as the rest of the pipeline. Each turn goes to the model with its timestamp and speaker role.
 
@@ -140,29 +151,29 @@ Results are written to `output/standup/`:
 
 | Option | The model reads | Writes |
 |---|---|---|
-| `both` (default) | The original, with the translation in brackets as a hint. The model is told to trust the original when they disagree | `summary.md` |
-| `english` | The IndicTrans2 English translation only | `summary_english.md` |
-| `original` | The transcript as spoken: Indic script mixed with English | `summary_original.md` |
+| `both` (default) | The original, with the translation in brackets as a hint. The model is told to trust the original when they disagree | `summary_<purpose>.md` |
+| `english` | The IndicTrans2 English translation only | `summary_<purpose>_english.md` |
+| `original` | The transcript as spoken: Indic script mixed with English | `summary_<purpose>_original.md` |
 
-With `both` and `original`, quotes are given in the original script followed by the model's own English translation. You can produce all three versions from one transcript without redoing transcription, for example: `SUMMARY_SOURCE=english python3 run_summary.py output/<name>`.
+With `both` and `original`, quotes are given in the original script followed by the model's own English translation. You can produce all three versions from one transcript without redoing transcription, for example: `PURPOSE=fgd SUMMARY_SOURCE=english python3 run_summary.py output/<name>`.
 
 On an hour-long Tamil and English group discussion, `both` gave the richest summary with the most accurate citations, but took about 40 minutes against 6 for `english`, because Tamil script needs about three times as many tokens. Use `SUMMARY_SOURCE=english` when you need a quick first look. The comparison is in [decision 9](DECISIONS.md#9-summarize-from-both-the-original-and-the-translation).
 
-**Speaker roles.** Diarization labels speakers `SPEAKER_00`, `SPEAKER_01` and so on. On the first run, the model reads the opening of the discussion and suggests who is the moderator and who are participants, and saves this to `speakers.json`. Edit the file to fix mistakes or to use names or descriptions such as `"Participant 3 (teacher)"`, then rerun `python3 run_summary.py output/<name>`. Delete the file to have the model suggest roles again.
+**Speaker roles.** Diarization labels speakers `SPEAKER_00`, `SPEAKER_01` and so on. On the first run, the model reads the opening of the discussion and suggests roles, following the purpose's prompt (for `fgd`, who is the moderator and who are participants), and saves this to `speakers.json`. Edit the file to fix mistakes or to use names or descriptions such as `"Participant 3 (teacher)"`, then rerun `PURPOSE=fgd python3 run_summary.py output/<name>`. Delete the file to have the model suggest roles again.
 
-**Summary format.** `summary.md` has an overview, key themes with supporting quotes, key highlights, points of agreement, points of disagreement, an action items table, and open questions. Every point cites `[hh:mm:ss] Speaker`. The action items table marks each item as Stated, meaning someone said it, or Suggested, meaning the model inferred it. A participation table at the end, computed directly from the transcript, shows each speaker's turns and share of talk time.
+**Summary format.** The `fgd` summary has an overview, key themes with supporting quotes, key highlights, points of agreement, points of disagreement, an action items table, and open questions. Every point cites `[hh:mm:ss] Speaker`. The action items table marks each item as Stated, meaning someone said it, or Suggested, meaning the model inferred it. A participation table at the end, computed directly from the transcript, shows each speaker's turns and share of talk time.
 
 **Checks.** The script sets Ollama's context window to 32,768 tokens, because Ollama's smaller default would silently cut a long transcript. It warns if the prompt still fills the window. An hour-long discussion fits in one pass from the English translation, but not from the original script, which takes several times more tokens. A transcript that doesn't fit is split into parts, the model takes notes on each part, and then writes the summary from the notes. After writing, the script checks every cited timestamp against the transcript and lists any that match no turn, which is a sign of an invented point or a misplaced citation.
 
-**Choosing a model.** The default is `qwen3.5:9b`. To try the larger `qwen3:14b`, run `ollama pull qwen3:14b`, then `SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>`. The 27B and larger Qwen models need 32 GB of memory or more. See [decision 5](DECISIONS.md#5-qwen-35-9b-in-ollama-for-the-summary) for why not DeepSeek or GLM.
+**Choosing a model.** The default is `qwen3.5:9b`. To try the larger `qwen3:14b`, run `ollama pull qwen3:14b`, then `PURPOSE=fgd SUMMARY_MODEL=qwen3:14b python3 run_summary.py output/<name>`. The 27B and larger Qwen models need 32 GB of memory or more. See [decision 5](DECISIONS.md#5-qwen-35-9b-in-ollama-for-the-summary) for why not DeepSeek or GLM.
 
 ## Speeding up the audio
 
 `SPEED=1.5` speeds the audio up before diarization and transcription. Pitch is kept, and timestamps are scaled back to the original recording. We don't recommend it for Indic speech. In our test, English came through with 6% of words changed, but 62% of Tamil words changed, including a participant's name ([decision 7](DECISIONS.md#7-do-not-speed-up-the-audio)). To test it on your own audio, run the same clip at both speeds and compare:
 
 ```bash
-bash run_all.sh test-1x test.m4a
-SPEED=1.5 bash run_all.sh test-15x test.m4a
+SUMMARIZE=0 bash run_all.sh test-1x test.m4a
+SUMMARIZE=0 SPEED=1.5 bash run_all.sh test-15x test.m4a
 python3 compare_runs.py output/test-1x output/test-15x
 ```
 
@@ -208,7 +219,7 @@ pip then warns that `pyannote-metrics 4.1 requires scipy>=1.15.1`. You can ignor
 
 **`401` or `403` errors during the download.** Accept the licence on both gated model pages while signed in to the same Hugging Face account that made the token.
 
-**`Ollama is not running`.** Start it with `brew services start ollama` or open the Ollama app, then rerun `python3 run_summary.py output/<name>`. The transcript is already saved.
+**`Ollama is not running`.** Start it with `brew services start ollama` or open the Ollama app, then rerun `PURPOSE=<purpose> python3 run_summary.py output/<name>`. The transcript is already saved.
 
 **`Model qwen3.5:9b is not downloaded`.** Run `ollama pull qwen3.5:9b`.
 

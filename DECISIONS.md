@@ -6,6 +6,7 @@ Tests were run on an Apple M3 Pro with 18 GB of memory on macOS 27, using a 2-mi
 
 | # | Decision | Status |
 |---|---|---|
+| 11 | [Summary prompt chosen by purpose, kept in files](#11-summary-prompt-chosen-by-purpose-kept-in-files) | Accepted |
 | 10 | [Use the Mac GPU for diarization and translation](#10-use-the-mac-gpu-for-diarization-and-translation) | Accepted |
 | 9 | [Summarize from both the original and the translation](#9-summarize-from-both-the-original-and-the-translation) | Accepted |
 | 8 | [Summary source: English, original, or both](#8-summary-source-english-original-or-both) | Superseded by #9 |
@@ -18,6 +19,27 @@ Tests were run on an Apple M3 Pro with 18 GB of memory on macOS 27, using a 2-mi
 | 1 | [One detected language per recording](#1-one-detected-language-per-recording) | Accepted |
 
 ---
+
+## 11. Summary prompt chosen by purpose, kept in files
+
+*2026-11-12. Accepted.*
+
+**Problem.** The summary prompt was written into `run_summary.py` for focus groups. Recordings are made for other purposes too, such as meetings and interviews, and each needs different sections: a meeting needs decisions and owners, not points of agreement.
+
+**Options.**
+
+- One general prompt for every recording. It would be weaker than a prompt tuned to each purpose.
+- Let the model guess the purpose from the transcript. A wrong guess would go unnoticed.
+- One prompt file per purpose, which the user names.
+
+**Decision.**
+
+- **Prompt files.** Each purpose is a file in `prompts/`, and `PURPOSE` picks it: `fgd`, `meeting`, or the path to any file. A file has six sections: title, role, extra rules, how to suggest speaker roles, what to note on each part of a long transcript, and the output format.
+- **Required.** `PURPOSE` has no default, because a summary written with the wrong prompt looks plausible and is easy to miss. `run_all.sh` checks it before transcription starts, so a missing purpose fails in seconds, not after an hour.
+- **What stays in code.** The rules that keep a summary honest are in the script, not the files, so a new purpose can't drop them. These are timestamp citations, no invented facts, how to quote each `SUMMARY_SOURCE`, the ban on meta-commentary, the citation check and the participation table.
+- **File names.** Each purpose writes `summary_<purpose>.md`, so several purposes can run on one transcript. This replaces the `summary.md` name from #9.
+
+**Evidence.** The `fgd` file reproduces the earlier built-in prompt exactly, so focus group results are unchanged. `meeting` has only been run on the 2-minute test clip, which is a focus group, not a meeting.
 
 ## 10. Use the Mac GPU for diarization and translation
 

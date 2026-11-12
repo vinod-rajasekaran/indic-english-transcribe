@@ -1,11 +1,15 @@
-# Stage 5: focus group summary with a local LLM served by Ollama. Fully local.
+# Stage 5: summary with a local LLM served by Ollama. Fully local. The prompt depends on PURPOSE.
 # Uses only the standard library, so it runs with system python3.
 #
-# Run with: python3 run_summary.py output/<name>
+# Run with: PURPOSE=fgd python3 run_summary.py output/<name>
 #
 # Reads  output/<name>/transcript.json   (written by the transcription stages)
 # Uses   output/<name>/speakers.json     (speaker label -> role; created on first run)
-# Writes output/<name>/summary.md
+# Writes output/<name>/summary_<purpose>.md
+#
+# PURPOSE (required) says what the recording is and so which prompt to use: the name of a file in
+# prompts/ (fgd for a focus group discussion, meeting for meeting notes), or the path to your own
+# prompt file. See prompts/README.md for the file format.
 #
 # Options (environment variables):
 #   SUMMARY_MODEL  Ollama model tag            default qwen3.5:9b
@@ -13,9 +17,9 @@
 #   OLLAMA_URL     Ollama server address       default http://localhost:11434
 #   SUMMARY_THINK  1 lets Qwen reason before answering (slower, sometimes better)
 #   SUMMARY_SOURCE what the model reads:
-#                    both      the original with the translation as a hint (default) -> summary.md
-#                    english   the IndicTrans2 translation only                       -> summary_english.md
-#                    original  the transcript as spoken, Indic + English              -> summary_original.md
+#                    both      the original with the translation as a hint (default) -> summary_<purpose>.md
+#                    english   the IndicTrans2 translation only                -> summary_<purpose>_english.md
+#                    original  the transcript as spoken, Indic + English       -> summary_<purpose>_original.md
 #                  See DECISIONS.md #9 for why both is the default.
 import datetime
 import json
@@ -41,6 +45,38 @@ INDIC_CHARS_PER_TOKEN = 1.2  # Indic scripts take far more tokens per character
 if len(sys.argv) < 2:
     sys.exit("Usage: python3 run_summary.py output/<name>")
 OUT_DIR = sys.argv[1].rstrip("/")
+
+# ---------- Purpose prompt ----------
+# The purpose-specific parts of the prompt live in prompts/<purpose>.md, in sections marked
+# [title], [role], [rules], [speakers], [notes] and [format]. The rules that keep the summary
+# faithful to the transcript (citations, no invented facts, how to quote) stay in this script.
+
+PROMPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+PROMPT_SECTIONS = ("title", "role", "rules", "speakers", "notes", "format")
+available = sorted(f[:-3] for f in os.listdir(PROMPT_DIR) if f.endswith(".md") and f != "README.md")
+PURPOSE = os.environ.get("PURPOSE", "").strip()
+if not PURPOSE:
+    sys.exit(f"Set PURPOSE to say what the recording is, for example PURPOSE=fgd. "
+             f"Available: {', '.join(available)}, or the path to your own prompt file.")
+PROMPT_FILE = PURPOSE if os.path.isfile(PURPOSE) else os.path.join(PROMPT_DIR, PURPOSE + ".md")
+if not os.path.isfile(PROMPT_FILE):
+    sys.exit(f"No prompt file for PURPOSE={PURPOSE}. Available: {', '.join(available)}, "
+             f"or the path to your own prompt file.")
+PURPOSE_NAME = os.path.splitext(os.path.basename(PROMPT_FILE))[0]
+
+prompt, section = {}, None
+with open(PROMPT_FILE, encoding="utf-8") as f:
+    for line in f:
+        m = re.fullmatch(r"\[(\w+)\]\s*", line)
+        if m:
+            section = m.group(1)
+            prompt[section] = ""
+        elif section:
+            prompt[section] += line
+prompt = {k: v.strip() for k, v in prompt.items()}
+missing = [k for k in PROMPT_SECTIONS if not prompt.get(k)]
+if missing:
+    sys.exit(f"{PROMPT_FILE} is missing these sections: {', '.join('[' + k + ']' for k in missing)}")
 TRANSCRIPT = os.path.join(OUT_DIR, "transcript.json")
 SPEAKERS = os.path.join(OUT_DIR, "speakers.json")
 
@@ -109,12 +145,12 @@ def chat(system, user, label):
 with open(TRANSCRIPT, encoding="utf-8") as f:
     segments = json.load(f)
 
-# The default (both) always writes summary.md, even when it falls back to the original below.
-default_source = SOURCE == "both"
+# The default source (both) writes summary_<purpose>.md, even when it falls back to the original below.
+SUMMARY = os.path.join(OUT_DIR, f"summary_{PURPOSE_NAME}" + ("" if SOURCE == "both" else f"_{SOURCE}") + ".md")
 if SOURCE != "original" and not any(s.get("english") for s in segments):
     print("No English translation found (was TRANSLATE=0?), so summarizing the original transcript.")
     SOURCE = "original"
-SUMMARY = os.path.join(OUT_DIR, "summary.md" if default_source else f"summary_{SOURCE}.md")
+print(f"Purpose: {PURPOSE_NAME} ({PROMPT_FILE})")
 
 LANG_NAMES = {"ta": "Tamil", "hi": "Hindi", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
               "bn": "Bengali", "mr": "Marathi", "gu": "Gujarati", "pa": "Punjabi", "or": "Odia",
@@ -174,12 +210,9 @@ if roles is None:
     talk = "\n".join(f"{spk}: {v['turns']} turns, {v['seconds'] / 60:.1f} minutes"
                      for spk, v in sorted(stats.items()))
     answer = chat(
-        "You label speakers in focus group transcripts. Reply with JSON only.",
+        "You label speakers in transcripts. Reply with JSON only.",
         "Speakers were labelled automatically, so labels like SPEAKER_00 carry no meaning.\n"
-        "Decide which speaker is the moderator or facilitator: they usually ask the questions, "
-        "introduce topics and invite others to speak. Label everyone else Participant 1, "
-        "Participant 2 and so on, in order of first appearance. If someone is clearly a note-taker "
-        "or observer, label them that way.\n\n"
+        f"{prompt['speakers']}\n\n"
         f"Talk time:\n{talk}\n\nOpening of the discussion:\n" + "\n".join(sample) +
         '\n\nReply with a JSON object mapping every label to a role, '
         'for example {"SPEAKER_00": "Moderator", "SPEAKER_01": "Participant 1"}.',
@@ -226,43 +259,18 @@ and translate it yourself. Work only from what is in the transcript, and write t
   If the quoted words are already English, quote them as they are with no translation.""",
 }[SOURCE]
 
-SYSTEM = f"""You are an experienced qualitative researcher writing up a focus group discussion.
+SYSTEM = f"""{prompt['role']}
 {SOURCE_NOTE}
 
 Rules:
 - Every point must cite evidence as [hh:mm:ss] Speaker, copied exactly from the transcript lines.
-- Say how widely a view was shared (one participant, several, most) rather than implying consensus.
+{prompt['rules']}
 - If a line is too garbled to interpret, leave it out rather than guess.
 - Do not add facts, names, numbers or recommendations that nobody in the discussion said.
 - Do not comment on transcription or translation quality. It is not a theme, highlight or action item.
 - Write in plain English. Use Markdown."""
 
-FORMAT = """Write the summary with exactly these sections:
-
-## Overview
-Three to five sentences: what the discussion was about, who took part, and the overall tone.
-
-## Key themes
-For each major theme (usually 3 to 7): a bold theme name, two or three sentences explaining it,
-how widely it was shared, and one or two supporting quotes with [hh:mm:ss] Speaker.
-
-## Key highlights
-The most important or surprising individual insights, as bullets, each with [hh:mm:ss] Speaker.
-
-## Points of agreement
-Bullets, each with citations.
-
-## Points of disagreement or tension
-Bullets, each naming the differing views and who held them, with citations. Write "None observed" if there were none.
-
-## Action items and recommendations
-A Markdown table with columns: Item | Raised by | Owner | Source.
-Owner is the person named in the discussion, or "Unassigned". Source is "Stated" if someone said it
-in the discussion, or "Suggested" if it is your recommendation based on the discussion.
-Put stated items first. Each item needs a [hh:mm:ss] citation.
-
-## Open questions and follow-ups
-Questions left unresolved, or topics worth exploring in a future session, with citations."""
+FORMAT = prompt["format"]
 
 budget = NUM_CTX - OUTPUT_TOKENS - PROMPT_OVERHEAD
 full = "\n".join(lines)
@@ -286,7 +294,7 @@ else:
         notes.append(chat(
             SYSTEM,
             f"This is part {k} of {len(chunks)} of the discussion. Write detailed notes on it: "
-            "themes, notable views, agreements, disagreements, action items and open questions. "
+            f"{prompt['notes']}. "
             "Keep every [hh:mm:ss] Speaker citation and copy the best quotes word for word.\n\n"
             "Transcript part:\n" + "\n".join(chunk),
             f"notes on part {k}/{len(chunks)}",
@@ -302,9 +310,9 @@ else:
                 continue
             merged.append(chat(
                 SYSTEM,
-                "Combine these two sets of consecutive notes into one shorter set. Keep the themes, "
-                "agreements, disagreements, action items and open questions, the best quotes word for "
-                "word, and every [hh:mm:ss] Speaker citation you keep.\n\n" + "\n\n".join(pair),
+                f"Combine these two sets of consecutive notes into one shorter set. Keep the {prompt['notes']}, "
+                "the best quotes word for word, and every [hh:mm:ss] Speaker citation you keep.\n\n"
+                + "\n\n".join(pair),
                 f"condensing notes {k + 1}-{k + 2}",
             ))
         notes = merged
@@ -333,7 +341,7 @@ for spk, v in sorted(stats.items(), key=lambda kv: -kv[1]["seconds"]):
 
 duration = stamp(max(s["end"] for s in turns))
 with open(SUMMARY, "w", encoding="utf-8") as f:
-    f.write(f"# Focus group summary: {os.path.basename(OUT_DIR)}\n\n")
+    f.write(f"# {prompt['title']}: {os.path.basename(OUT_DIR)}\n\n")
     f.write(f"Recording length {duration}, {len(stats)} speakers, {len(turns)} turns. "
             f"Generated {datetime.date.today()} by {MODEL} from the "
             f"{ {'english': 'English translation', 'original': 'original transcript', 'both': 'original transcript with translation hints'}[SOURCE] }.\n\n")

@@ -2,7 +2,7 @@
 # Usage: bash run_all.sh <output-name> <file1> [file2 file3 ...]
 # Every file must be inside input/. Files are joined in exactly the order you list them,
 # so one continuous timeline runs across all of them.
-# Example: bash run_all.sh standup part1.mp4 part2.mp4 part3.mp4
+# Example: PURPOSE=fgd bash run_all.sh standup part1.mp4 part2.mp4 part3.mp4
 # Optional: MIN_SPEAKERS=2 MAX_SPEAKERS=5 ASR_LANG=ta bash run_all.sh standup part1.mp4 part2.mp4
 #   ASR_LANG    Flex language code (ta, hi, te, kn, ml, bn, ...). Default "auto" detects it.
 #   TRANSLATE=0 skip the English translation (transcribe and transliterate only).
@@ -10,7 +10,9 @@
 #   SPEED=1.5   speed the audio up before diarization and transcription (timestamps are scaled back).
 #   DEVICE=cpu  force one device for every stage (default auto: NVIDIA GPU if present; on a Mac,
 #               the GPU for diarization and translation and the CPU for transcription).
-#   SUMMARIZE=0 skip the focus group summary. SUMMARY_MODEL picks the Ollama model (default qwen3.5:9b).
+#   PURPOSE=fgd what the recording is, which picks the summary prompt in prompts/ (fgd, meeting, or a
+#               path to your own file). Required unless SUMMARIZE=0.
+#   SUMMARIZE=0 skip the summary. SUMMARY_MODEL picks the Ollama model (default qwen3.5:9b).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -23,6 +25,16 @@ mkdir -p "$WORK" "$OUT"
 TRANSLATE="${TRANSLATE:-1}"
 if [ "$TRANSLATE" = "1" ] && [ ! -x env-translate/bin/python ]; then
   echo "Translation needs env-translate. Run bash setup.sh, or set TRANSLATE=0 to skip translation."; exit 1
+fi
+
+# Check the summary purpose now, rather than failing after an hour of transcription.
+if [ "${SUMMARIZE:-1}" != "0" ]; then
+  if [ -z "${PURPOSE:-}" ]; then
+    echo "Set PURPOSE to say what the recording is, for example PURPOSE=fgd (prompts: $(ls prompts | grep -v README.md | sed 's/\.md$//' | tr '\n' ' ')). Or set SUMMARIZE=0."; exit 1
+  fi
+  if [ ! -f "$PURPOSE" ] && [ ! -f "prompts/$PURPOSE.md" ]; then
+    echo "No prompt file for PURPOSE=$PURPOSE. Use one in prompts/ or the path to your own file."; exit 1
+  fi
 fi
 
 # Keep everything local. Models must already be downloaded.
@@ -77,9 +89,9 @@ else
 fi
 
 if [ "${SUMMARIZE:-1}" != "0" ]; then
-  echo "Step 5/5: focus group summary"
+  echo "Step 5/5: summary ($PURPOSE)"
   # The transcript is already saved, so a summary failure only prints a hint.
-  python3 run_summary.py "$OUT" || echo "Summary skipped. Fix the problem above, then run: python3 run_summary.py $OUT"
+  python3 run_summary.py "$OUT" || echo "Summary skipped. Fix the problem above, then run: PURPOSE=$PURPOSE python3 run_summary.py $OUT"
 fi
 
 echo "Done. Results are in $OUT/"
